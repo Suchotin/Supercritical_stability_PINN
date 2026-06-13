@@ -24,10 +24,13 @@ Everything is under `Supercritical_stability_PINN/`:
 
 There is no build/test/lint setup — this is a notebook research project. Develop by running notebook cells top-to-bottom.
 
+The git repository root is `Supercritical_stability_PINN/` itself; the `.venv` (Python 3.10) sits one level above it, at the parent `pinn/`. Run notebooks with the CWD set to `Supercritical_stability_PINN/` (see "Working directory matters" below):
+
 ```bash
-source .venv/bin/activate            # Python 3.14 venv at repo root
+cd Supercritical_stability_PINN/
+source ../.venv/bin/activate          # Python 3.10 venv, one level up at pinn/
 # open a pinn_v*.ipynb and run cells in order, or:
-jupyter lab Supercritical_stability_PINN/
+jupyter lab .
 ```
 
 Key dependencies (already in `.venv`): `torch`, `numpy`, `scipy`, `pandas`, `matplotlib`, `iapws`, `openpyxl` (for the .xlsx), `ipykernel`.

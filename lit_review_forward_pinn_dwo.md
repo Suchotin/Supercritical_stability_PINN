@@ -1,0 +1,61 @@
+# Литобзор: forward-PINN для density-wave неустойчивости в сверхкритике без supervised-данных
+
+**Дата:** 2026-06-13
+**Запрос:** работы, где density-wave неустойчивость (DWO) в сверхкритике ловится forward-моделью (PINN) без supervised-данных.
+
+## Главный вывод
+
+Точного попадания «forward PINN ловит DWO в сверхкритике без данных» в литературе **нет** — это зазор/новизна данной работы. Но есть 4 работы, закрывающие ровно те механизмы, на которых стоит задача (причинность обучения, достижимость неустойчивой ветки решения, нормировка невязки), плюс соседи по физике и архитектуре.
+
+---
+
+## Прямое ядро — методы, которые уже используются / должны цитироваться
+
+| Работа | Claim | Почему критично |
+|---|---|---|
+| **Wang, Sankaran, Perdikaris — «Respecting causality for training PINNs»** (CMAME 2024) — [ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S0045782524000690) · [код](https://github.com/PredictiveIntelligenceLab/CausalPINNs) | Vanilla-PINN не воспроизводит multi-scale/хаос/turbulent, потому что NTK-bias заставляет минимизировать невязку сначала на ПОЗДНИХ временах → нарушает причинность. Causal weighting `w_m = exp(−ε·Σ_{j<m} L_j)` чинит. Первый раз PINN взял Lorenz, Kuramoto–Sivashinsky (хаос), Navier–Stokes. | Это ровно `causal_pde_loss`. Главный first-principles аргумент, почему гладкий forward-PINN садится на неустойчивое QS-решение и как это пробить. **Цитировать как фундамент.** |
+| **Dong, Cao, Suo, Kou, Zhang — «Optimization-Based Discovery of a Non-Attracting Flow State in an Oscillating-Cylinder Wake»** (arXiv:2604.00441) | Forward-PINN на NS **без данных** находит решения, *недостижимые time-stepping'ом* — в т.ч. неустойчивый предельный цикл / вихревую дорожку Кармана при сверхкритическом Re. Есть приложение с канонической моделью Хопфа. Ключ: исход зависит от **scale инициализации** — при малой сеть застревает у нуля, не доходя до цикла. | Самая близкая по духу: PINN-как-forward-solver достаёт *non-attracting* неустойчивое решение без supervised. «Сверхкритический Re», предельный цикл, Хопф — прямая аналогия DWO. Предупреждение про инициализацию = warm-start/гейт. **Главный paper-аналог.** |
+
+---
+
+## Гипотезы про то, *почему forward-PINN не осциллирует* — и как чинят другие
+
+| Работа | Гипотеза / механизм | Применимо |
+|---|---|---|
+| **«Resolving Sharp Gradients of Unstable Singularities to Machine Precision via Neural Networks»** (arXiv:2511.22819) | Стандартный PINN-loss минимизирует *абсолютную* невязку → размазывает ошибку равномерно, давит резкие/тонкие особенности, **застревает на высоком residual** у неустойчивых решений. Лечение: **gradient-normalized residual**. | Прямо проблема нормировки невязки по зонам (`energy_scale`, per-zone). Гипотеза: keepers — частный случай ребаланса landscape'а. Проверить gradient-norm как альтернативу ручным весам. |
+| **«Predictive Limitations of PINNs in Vortex Shedding»** (arXiv:2306.00230) | Документирует, что vanilla-PINN **не предсказывает** периодический срыв/осцилляции — садится на стационар. | Контр-пример/мотивация: подтверждает, что без спец-механизма forward-PINN осцилляции теряет. Для раздела «почему наивный подход не работает». |
+| **«Learning thermoacoustic interactions in combustors using a PINN»** (ScienceDirect 2024) — [link](https://www.sciencedirect.com/science/article/abs/pii/S095219762401546X) | PINN на low-order модели для **самовозбуждающихся** термоакустических колебаний (тоже Хопф-неустойчивость, предельный цикл). | Ближайший физический кузен DWO — другая, но та же математика (self-excited limit cycle). Источник идей по архитектуре/форсингу. NB: у них есть data-loss — контраст «а мы без данных». |
+
+---
+
+## Соседи по физике (traditional solvers — для постановки задачи, не метода)
+
+DWO в сверхкритике классически решают time-domain implicit FD / coupled neutronic-TH, **не** ML:
+
+- Numerical analysis of DWO + heat transfer deterioration in SCWR — [Springer](https://link.springer.com/article/10.1007/s12206-018-0208-7) / [academia PDF](https://www.academia.edu/129251529/Numerical_analysis_of_density_wave_instability_and_heat_transfer_deterioration_in_a_supercritical_water_reactor)
+- Nonlinear analysis: subcritical / **supercritical / generalized Hopf** bifurcations + first Lyapunov coefficients, limit-cycle behaviour — [ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S0149197021000111)
+- Nuclear-coupled TH parallel-channel DWO в SCWR — [ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S0306454922005254)
+- The analysis of density wave instability of supercritical water in two parallel channels — [ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S0306454920307106)
+- Nonlinear coupled neutronic–thermohydraulic stability of SCWR — [ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S0306454923005169)
+- LSTM (не PINN) для DWO в кипящем канале — [ScienceDirect](https://www.sciencedirect.com/science/article/pii/S1738573324006582)
+
+Соседние instability-PINN для архитектурных приёмов:
+
+- **KH-PINN** (Kelvin–Helmholtz, variable density) — [arXiv:2411.07524](https://arxiv.org/pdf/2411.07524)
+- Shock-front benchmarking (почему vanilla-PINN мажет резкие фронты) — [arXiv:2503.17379](https://arxiv.org/pdf/2503.17379)
+- Extended PINN для гиперболического two-phase flow — [arXiv:2511.13734](https://arxiv.org/html/2511.13734v2)
+- TL-PINN для transients ядерного реактора — [PMC](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10558465/)
+
+---
+
+## Три гипотезы для работы
+
+1. **Причинность — необходимое условие.** Гладкое QS-решение неустойчиво; NTK-bias тянет PINN именно на него. Causal weighting (Wang+2024) — документированный способ заставить нестабильность вырасти. → `causal_eps`.
+2. **Достижимость ≠ существование.** Dong+ показывают: предельный цикл *существует* как решение NS, но time-stepping его не достигает, а forward-PINN — да, при правильной инициализации. → оправдывает warm-start + gate как «выбор ветки решения», а не data-fitting.
+3. **Нормировка невязки определяет, какую ветку поймаешь.** Абсолютный residual давит тонкую неустойчивость (arXiv:2511.22819). → per-zone keepers; сравнить с gradient-normalized residual как более принципиальной альтернативой ручным весам.
+
+---
+
+## Возможный следующий шаг
+
+Глубокий разбор любой из двух ядровых работ (Wang+2024 или Dong+): вытащить точную формулу causal-веса / схему инициализации и сверить 1:1 с тем, что стоит в ноутбуке `pinn_v3b_imposed_dp.ipynb`.
