@@ -28,6 +28,25 @@
 
 ---
 
+## Нейросети любого типа для DWO — прямые соседи целевой статьи (10.1016/j.net.2024.103407)
+
+Целевой DOI — это **Buchanan et al., «A recurrent neural network for modeling natural circulation density wave instabilities»** (*Nuclear Engineering and Technology*, 2024) — LSTM/RNN, обученный на данных DWO. Ниже — кластер работ, где DWO ловят нейросетью **любого типа**. Важно: **все они supervised / data-driven** (учатся на данных кода или эксперимента); ни одна не forward-physics. Это прямой контраст к данной работе и подтверждает зазор «forward-PINN без данных». Целевая статья, DNN-предшественник (2022) и диссертация Virginia Tech — фактически **одна научная группа** (Buchanan, Duarte; данные стенда KATHY).
+
+| Работа | Сеть / данные | Что делает с DWO | Отношение к нашей задаче |
+|---|---|---|---|
+| **target:** Buchanan et al., «A recurrent neural network for modeling natural circulation density wave instabilities» (NET 2024) — [ScienceDirect](https://www.sciencedirect.com/science/article/pii/S1738573324006582) | LSTM/RNN; временные ряды DWO (натуральная циркуляция) | Моделирует/прогнозирует колебания расхода (амплитуда, динамика) | Тот же объект (DWO), но **data-driven surrogate**, не решение уравнений. Прямой антипод по философии — «учим по данным» vs «решаем физику без данных». |
+| «Prediction of Unstable Two-Phase Flow Behavior using Dense Neural Network» (2022) — [ResearchGate](https://www.researchgate.net/publication/366016952_Prediction_of_Unstable_Two-Phase_Flow_Behavior_using_Dense_Neural_Network) | Dense NN (DNN); та же группа (Buchanan, VT) | Предсказывает амплитуду flow-oscillation / границу DWI (Type-II) | Предшественник target-статьи; DNN хуже ловит динамику → мотивация перехода к рекуррентным. |
+| Hurley (Virginia Tech, дисс.) «Density-Wave Instability Characterization in BWRs under MELLLA+ during ATWS» — [VTechWorks](https://vtechworks.lib.vt.edu/items/02ff98f2-1538-498b-a7e3-d6d17abd8347) | 2 NN-модели на эксп. данных KATHY + TRACE/point-kinetics | Карта устойчивости / параметрика DWO; ML vs физ.модель | Источник данных и контекста для target/DNN-работ; явно фиксирует trade-off «сложность ↔ физичность» surrogate. |
+| «Classification of two-phase flow instability phases using convolutional neural networks» (INIS/IAEA) — [INIS](https://inis.iaea.org/records/wf4a5-rsx66) | CNN, классификация по изображениям режимов потока | Распознаёт фазы неустойчивости в натуральной циркуляции | NN на DWO, но задача — классификация картинок, не динамика полей. Другой угол. |
+| Gupta et al. «Numerical simulation and artificial neural network modeling of natural circulation boiling water reactor» (Nucl. Eng. Des. 2007) — [ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S0029549306004304) | ANN-суррогат, обучен на RELAP5 | Быстрая параметрика устойчивости NC-BWR | Ранний пример NN-суррогата устойчивости кипящего канала; полностью data-driven. |
+| Lombardi et al. «Prediction of two-phase mixture density using artificial neural networks» (Ann. Nucl. Energy 1997) — [ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S0306454997000066) | ANN, плотность кипящей смеси | Не DWO напрямую — плотность смеси (вход в нейтронику/динамику) | Историческая отправная точка NN в этой нише; косвенно. |
+
+**Зазор по сверхкритике.** В сверхкритическом домене нейросети применяют почти исключительно к **теплоотдаче / HTD** (предсказание Tw, Nu), а не к неустойчивости течения. NN именно для **DWO-в-сверхкритике** в выдаче не нашлось → ниша данной работы пуста даже в data-driven постановке, не только в forward-PINN.
+
+**Вывод для позиционирования.** Весь существующий NN-кластер по DWO — supervised (RNN/DNN/CNN/ANN на данных кода или стенда). Forward-PINN, который достаёт DWO из уравнений **без supervised-данных**, не пересекается ни с одной из этих работ ни по методу, ни (для сверхкритики) по объекту. Цитировать этот кластер как «related ML work — все data-driven» в контрасте с предлагаемым подходом.
+
+---
+
 ## Соседи по физике (traditional solvers — для постановки задачи, не метода)
 
 DWO в сверхкритике классически решают time-domain implicit FD / coupled neutronic-TH, **не** ML:
@@ -37,7 +56,7 @@ DWO в сверхкритике классически решают time-domain 
 - Nuclear-coupled TH parallel-channel DWO в SCWR — [ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S0306454922005254)
 - The analysis of density wave instability of supercritical water in two parallel channels — [ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S0306454920307106)
 - Nonlinear coupled neutronic–thermohydraulic stability of SCWR — [ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S0306454923005169)
-- LSTM (не PINN) для DWO в кипящем канале — [ScienceDirect](https://www.sciencedirect.com/science/article/pii/S1738573324006582)
+- NN-работы по DWO (LSTM/DNN/CNN/ANN, все data-driven) вынесены в отдельный раздел «Нейросети любого типа для DWO» выше — это целевой DOI 10.1016/j.net.2024.103407 и его соседи
 
 Соседние instability-PINN для архитектурных приёмов:
 
