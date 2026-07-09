@@ -4,74 +4,96 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A physics-informed neural network (PINN) for the **stability of supercritical water flow** in a heated channel (a single-channel thermal-hydraulics stability study near the pseudo-critical point, ~25 MPa water). The network learns the transient 1D flow fields by minimizing PDE residuals (conservation of mass, momentum, energy) plus initial/boundary conditions — there is no labelled supervision on the interior. The reference transient data (`Churkin-Kout20-Nspc2.0-Transient-Water-Vertical.xlsx`) is used only as time-dependent forcing (power, inlet/outlet flow) and for validation.
+A physics-informed neural network (PINN) for the **stability of supercritical water flow** in a heated channel (single-channel thermal-hydraulics stability study near the pseudo-critical point, ~25 MPa water; the Ambrosini/Churkin TEMPA-SC benchmark, Kout=20, NSPC=2.0). The network learns the transient 1D flow fields by minimizing PDE residuals (mass, momentum, energy) plus initial/boundary conditions — **no labelled supervision on the interior**. The reference transient (`Churkin-Kout20-Nspc2.0-Transient-Water-Vertical.xlsx`) is used only as time-dependent forcing (power `Q(t)`) and for validation. The scientific goal is to reproduce the **density-wave oscillations (DWO)** from physics alone.
 
-The work lives almost entirely in Jupyter notebooks. Each `pinn_v*.ipynb` is a self-contained, sequentially-runnable iteration of the model; later versions supersede earlier ones rather than importing from them. The only reusable Python module is `eos_iapws_spline.py`.
+The work lives almost entirely in Jupyter notebooks. Each `pinn_v*.ipynb` is a self-contained, sequentially-runnable iteration; later versions supersede earlier ones rather than importing from them. The only reusable Python module is `eos_iapws_spline.py`.
+
+**Start with `HANDOFF.md`** — it holds the current state of the investigation and decisions already made. The `tech_report_*.md` / `*.md` docs (below) record diagnoses in detail.
 
 ## Layout
 
-Everything is under `Supercritical_stability_PINN/`:
-- `eos_iapws_spline.py` — the one shared module. Builds a 2D IAPWS97 `rho(p, h)` table and wraps it in a `RectBivariateSpline` (`IAPWSDensitySpline`) so density and its partials `drho/dp`, `drho/dh` are smooth and cheap inside the training loop.
-- `iapws_density_spline_25mpa.npz` — cached EOS table. Generated once via `IAPWSDensitySpline.build()`, then loaded; rebuilding it calls IAPWS97 thousands of times (slow), so keep the cache.
-- `pinn_v1_lambda=const.ipynb` → `pinn_v4_mass_reweighting.ipynb` — model iterations, newest is v4. (v3 has a broken-then-`_fixed` pair; prefer `pinn_v3_energy_from_mass_fixed_notebook.ipynb`.)
-- `pinn_v3b_imposed_dp.ipynb` — branch off v3 that fixes the pressure boundary conditions to the *imposed-Δp* formulation (see "Physical setup" below). The active line of work as of June 2026.
+Everything is in this directory (which is also the git repo root; the Python 3.10 `.venv` sits one level **above**, at `../`):
+
+Code and data:
+- `eos_iapws_spline.py` — the one shared module. Builds a 2D IAPWS97 `rho(p, h)` table wrapped in a `RectBivariateSpline` (`IAPWSDensitySpline`) so density and its partials `drho/dp`, `drho/dh` are smooth and cheap in the training loop.
+- `iapws_density_spline_25mpa.npz` — cached EOS table. Rebuilding calls IAPWS97 thousands of times (slow) — keep the cache.
 - `Churkin-...xlsx` — reference transient (forcing + validation target).
-- `summary_late.csv` — exported early/late diagnostics from a v4 run.
-- `1-s2.0-S0306454910003282-main.pdf` — **the source paper**: Ambrosini, "Assessment of flow stability boundaries in a heated channel ... at supercritical pressure", *Annals of Nuclear Energy* 38 (2011) 615–627. Defines the dimensionless equations (its Eqs. 3–9) and the boundary conditions this PINN reproduces.
-- `Churkin-Description.pdf` — TEMPA-SC benchmark description (OKB Gidropress). Specifies the exact boundary conditions and forcing behind the `Churkin-...xlsx` data: constant pressure/inlet-temperature, power as a function of time, `Δpch = 0.12 MPa`, `pout = 25 MPa`, `pin = pout + Δpch`.
+- `fv_reference_curve.npz` — mass-flow reference curve exported from the FV solver; used as the comparison baseline in later notebooks.
+- `*.pt` — model checkpoints (`v3b_*.pt`, `v4_causal*.pt`, `physics_lstm_fv_dwo.pt`); saved/loaded by the "Checkpoint helpers" cell so diagnostics can run without retraining.
+
+Notebook lineage (newest lines first):
+- **`pinn_v4_causal_good_enough.ipynb`** — the canonical PINN base ("good_enough"). Cells 0–13 (Forcing → EOS → Case → models → Physics → Sampler/Trainer) are the reference implementation; cell 16 is causal training from scratch per Wang–Sankaran–Perdikaris (CMAME 2024); the back half is diagnostics + keeper ablation. `pinn_v4_causal_new.ipynb` / `_adv` variants are documented regressions/experiments (see `tech_report_causal_v4.md`).
+- **`pinn_v4_fv_solver.ipynb`** — "Variant A": a differentiable finite-volume (method-of-lines) DWO solver built on the same `Physics`/`Case`/EOS objects, no neural net. With N=600, dt=0.05 it **does reproduce the oscillations from physics** (~1 min runtime) — it is the physics ground truth and the source of `fv_reference_curve.npz`. Its plot style is the canonical style for new notebooks.
+- `physics_lstm_fv_dwo.ipynb` — physics-informed recurrent (Conv+LSTM) solver on the FV discretization; physics-only curriculum training, long causal rollout.
+- `wrong_basin_test.ipynb` — diagnostic: warm-starts from the true hot fields to test whether the smooth-PINN loss basin excludes the oscillatory solution.
+- `pinn_v1`…`pinn_v3b_*` — historical iterations. v3b fixed the over-constrained pressure BC (see below); `_mom_normed` adds relative momentum normalization. v3 has a broken-then-`_fixed` pair — prefer `pinn_v3_energy_from_mass_fixed_notebook.ipynb`.
+
+Documents:
+- `HANDOFF.md` — investigation state + decisions; read first.
+- `tech_report_causal_v4.md` — why `good_enough` beats `new`; the causal-weighting math (annealed ε, causalized keepers).
+- `normalizations_tech_report.md` — every non-dimensionalization scale in the code, with concrete numbers for this case.
+- `pure_forward_recipe.md` — how to train into the physically correct basin without supervised data.
+- `lit_review_forward_pinn_dwo.md` — literature: no prior forward-PINN-catches-DWO-in-supercritical work exists; this is the novelty gap.
+- `pinn-pressure-bc-physics.md` — the BC physics note (imposed Δp, free flow).
+- PDFs: `1-s2.0-S0306454910003282-main.pdf` — **the source paper** (Ambrosini, *Annals of Nuclear Energy* 38 (2011) 615–627; defines the dimensionless Eqs. 3–9 and BCs). `Churkin-Description.pdf` — TEMPA-SC benchmark spec (`Δpch = 0.12 MPa`, `pout = 25 MPa`, power vs. time). `Recurrent_DWO.pdf` and the other two Elsevier PDFs — method references for the recurrent/FV lines.
 
 ## Running
 
-There is no build/test/lint setup — this is a notebook research project. Develop by running notebook cells top-to-bottom.
-
-The git repository root is `Supercritical_stability_PINN/` itself; the `.venv` (Python 3.10) sits one level above it, at the parent `pinn/`. Run notebooks with the CWD set to `Supercritical_stability_PINN/` (see "Working directory matters" below):
+No build/test/lint setup — a notebook research project. Develop by running cells top-to-bottom.
 
 ```bash
 cd Supercritical_stability_PINN/
-source ../.venv/bin/activate          # Python 3.10 venv, one level up at pinn/
-# open a pinn_v*.ipynb and run cells in order, or:
-jupyter lab .
+source ../.venv/bin/activate     # Python 3.10 venv, one level up
+jupyter lab .                    # open a pinn_v*.ipynb and run cells in order
 ```
 
-Key dependencies (already in `.venv`): `torch`, `numpy`, `scipy`, `pandas`, `matplotlib`, `iapws`, `openpyxl` (for the .xlsx), `ipykernel`.
+Dependencies are pinned in `requirements.txt` and already installed in `.venv`: `torch`, `numpy`, `scipy`, `pandas`, `matplotlib`, `iapws`, `openpyxl`, `ipykernel`, `pypdf`.
 
-**Working directory matters.** Notebooks load `iapws_density_spline_25mpa.npz` and the `.xlsx` by *relative* path, so run them with the CWD set to `Supercritical_stability_PINN/`. They also do `sys.path.append("/mnt/data")` and import `eos_iapws_spline` — a leftover from a cloud sandbox. On this machine the import resolves because the notebook's own directory is already on `sys.path`; the `/mnt/data` append is harmless but meaningless here.
+**Working directory matters.** Notebooks load the `.npz` and `.xlsx` by *relative* path — run with CWD set to this directory. The `sys.path.append("/mnt/data")` in cell 0 is a harmless cloud-sandbox leftover; `eos_iapws_spline` imports because the notebook's own directory is on `sys.path`.
 
-Training is CPU-friendly but slow; the code auto-selects CUDA if present (`torch.device("cuda" if ... else "cpu")`).
+Training is CPU-friendly but slow; code auto-selects CUDA when present.
 
-**Reading the PDFs.** The Read tool needs poppler (not installed) to render PDFs here. Instead use `pypdf` inside the venv: `pip install pypdf -q` then `PdfReader(path).pages[i].extract_text()`. `Churkin-Description.pdf` has many "wrong pointing object" warnings and its equation glyphs extract as garbage — the prose (boundary conditions, methodology) extracts fine, the math does not.
+**Reading the PDFs.** The Read tool lacks poppler here. Use `pypdf` in the venv: `PdfReader(path).pages[i].extract_text()`. `Churkin-Description.pdf` emits many "wrong pointing object" warnings and its equation glyphs extract as garbage — prose extracts fine, math does not.
 
-## Physical setup — boundary conditions (this is the crux of the project)
+## Physical setup — boundary conditions (the crux)
 
-The whole point is to reproduce **density-wave / flow-rate oscillations** that arise as a supercritical-pressure instability. Both source documents agree on how the channel is driven, and getting this right in the PINN is what makes oscillations possible:
+Both source documents agree on how the channel is driven; getting this right is what makes oscillations possible:
 
-- **Pressure drop Δp* across the channel is *imposed and constant*** — Ambrosini: "the value of the pressure drop ... is imposed across the channel, **letting flow rate to freely oscillate**." Churkin: `Δpch = 0.12 MPa`, `pout = 25 MPa`, `pin = pout + Δpch`. This is **one** constraint on the *difference* `π*(0,t) − π*(1,t) = Δπ*`, plus a gauge anchor `π*(1,t) = 0`. It must NOT be two independent fixings of `π*` at each end.
+- **Pressure drop Δp\* across the channel is imposed and constant** — Ambrosini: "the value of the pressure drop ... is imposed across the channel, **letting flow rate to freely oscillate**." Churkin: `Δpch = 0.12 MPa`, `pout = 25 MPa`. This is **one** constraint on the *difference* `π*(0,t) − π*(1,t) = Δπ*` plus a gauge anchor `π*(1,t) = 0`. It must NOT be two independent fixings of `π*` at each end — that over-constrains the system and kills oscillations (the v3/v4 bug fixed in `pinn_v3b_imposed_dp.ipynb`: `R_dp = (pi_in − pi_out)/dpi_star − 1`, loss key `bc_dp`).
 - **Inlet enthalpy is imposed**: `h*(0,t) = −NSPC` (constant).
-- **Mass flux is free.** `G*_in = ρ*_in` holds only as an *initial condition* at `t=0` (it's in `ic_loss`), never as a time-wise boundary condition — pinning it would over-constrain the system and kill oscillations.
-- **The instability is excited by slowly rising power** `Q(t)` from the xlsx (`NQ_prime(t)`). Rising outlet temperature → falling flow rate → more heating → density-wave oscillations.
+- **Mass flux is free.** `G*_in = ρ*_in` holds only as an *initial condition* at `t=0` (in `ic_loss`), never as a time-wise BC.
+- **The instability is excited by slowly rising power** `Q(t)` from the xlsx (`NQ_prime(t)`): rising outlet temperature → falling flow → more heating → density-wave oscillations. Reference NTPC instability threshold for this case ≈ 2.9 (Churkin Table 2).
 
-**The bug fixed in `pinn_v3b_imposed_dp.ipynb`:** v3/v4 `bc_loss` fixed `π*` at *both* ends independently (`bc_pi_in` + `bc_pi_out`), which over-constrains the problem so the net learns a straight pressure line and the flow cannot oscillate. v3b replaces that with `R_dp = (pi_in − pi_out)/dpi_star − 1` (imposed Δp) + `R_pi_out = pi_out/dpi_star` (gauge), logged as `bc_dp` instead of `bc_pi_in`. Reference NTPC instability threshold for this case (Kout=20, NSPC≈1.5–2) is ≈ 2.9 (Churkin Table 2).
+Even with correct BCs, a smooth tanh net minimizing MSE residuals averages the instability to zero — the oscillatory branch is not the minimum-residual attractor (proven: the FV solver on the *same* physics objects does oscillate). That is why the active lines use causal training, time-Fourier features, and FV/recurrent discretizations.
 
-Open question for the next iteration: even with correct BCs, a smooth tanh net minimizing MSE residuals tends to average the instability to zero. If oscillations still don't appear, the planned next step is Fourier features **in time** + the v4 causal-curriculum (finer time stages) — `SirenPINN`/`HybridPINN`/`FourierFeatures` already exist in the notebook for exactly this, but there is no physical trigger wired up yet.
+## Standing decisions (do not re-litigate)
 
-## Architecture of a notebook (v4 is the canonical reference)
+- Oscillations must be **reproduced from physics** (forward model), not fitted via a supervised data-loss on the baseline flow.
+- Pressure setup follows **Ambrosini/Churkin exactly**: imposed Δp, free flow.
+- The **causal-PINN line must converge from random init** — no warm start or marching-bootstrap of any kind.
+- **New approaches build on the user's own base**: `pinn_v4_causal_good_enough.ipynb` cells 0–13 verbatim + the FV solver + the Ambrosini paper. Do not import constructions from rejected experimental lines.
+- Plots in new notebooks follow the canonical style of the FV-solver notebook.
 
-Cells are organized as a pipeline. The conceptual flow:
+## Architecture of a notebook (`good_enough` cells 0–13 are the canonical base)
 
-1. **`Forcing.from_excel`** — parses the transient: power `Q(t)`, inlet/outlet flow, NTPC. Establishes the baseline mass flux `mdot0` from the pre-ramp window and shifts time so `tau=0` is ramp start.
-2. **EOS setup** — load/build the density spline; build a separate `IAPWSViscositySpline` (1D, `mu(h)` at fixed `p_ref`) for the friction term.
-3. **`Case.build`** — the central object. Computes all geometry, pseudo-critical reference state (`rho_pc`, `h_pc`, `Cp_pc`, `beta_pc`), and especially the **non-dimensionalization scales** (`G0_star`, `dpi_star`, `Fr`, and per-equation loss scales `mass_scale`, `mom_mid_scale`, `mom_delta_scale`, `energy_scale`). Almost every physics term is expressed in `*`-starred dimensionless variables defined here.
-4. **Model** — three interchangeable nets, all mapping `(z, t) -> (G_hat, h_hat, Pi_hat)`: `SmoothPINN` (tanh MLP, the default), `HybridPINN` (smooth MLP + gated Fourier-feature branch for sharp fronts), `SirenPINN` (sine activations). Inputs are rescaled to `[-1, 1]`; outputs are dimensionless field "hats" that `Physics.fields` multiplies by the `Case` scales to recover `G`, `h`, `pi`.
-5. **`Physics`** — the residual engine. `residuals_raw` builds mass/momentum/energy residuals using `d(y, x)` (autograd) for derivatives and chain-rule density derivatives from the EOS spline (the spline is **not** differentiated by autograd — its analytic partials are injected via the `value + slope*(x - x.detach())` trick so gradients flow correctly; see `eos25`, `IAPWSViscositySpline.eval_torch`). `residuals_scaled` divides each residual by its `Case` scale, with momentum optionally normalized *relative* to the sum of its own term magnitudes (`relative_mom`). The channel is split into three z-zones — `in`, `mid`, `out` — so the inlet/outlet local-loss spikes (smooth Gaussian `delta_inlet`/`delta_outlet`) get their own loss weighting.
-6. **`LossWeights` + `Trainer`** — weighted sum of zone PDE losses + IC + BC, Adam, grad-norm clipping.
-7. **`train_causal_curriculum`** — the actual training driver. Trains in **time stages** (`frac` of the full horizon: 0.25 → 0.5 → 0.75 → 1.0), expanding the active time window via `sampler.set_active_time` so the network learns causally from `t=0` forward. This is the intended way to train, not the plain loop in the commented-out cell.
-8. **Diagnostics** (the back half of the notebook) — `validate` (PINN flow/NTPC vs. reference), `pressure_budget` (integral momentum balance: accel, gravity, friction, local losses, flux jump), `pseudo_critical_indicator` (`S_pc` — proximity of enthalpy to the pseudo-critical point), heatmaps, and `summarize_early_late` which produces `summary_late.csv`.
+Cells form a pipeline:
+
+1. **`Forcing.from_excel`** — parses the transient: power `Q(t)`, inlet/outlet flow, NTPC. Establishes baseline mass flux `mdot0` from the pre-ramp window; shifts time so `tau=0` is ramp start.
+2. **EOS setup** — load/build the density spline; build a 1D `IAPWSViscositySpline` (`mu(h)` at fixed `p_ref`) for friction.
+3. **`Case.build`** — the central object: geometry, pseudo-critical reference state (`rho_pc`, `h_pc`, `Cp_pc`, `beta_pc`), and the **non-dimensionalization scales** (`G0_star`, `dpi_star`, `Fr`, per-equation `mass_scale`/`mom_mid_scale`/`mom_delta_scale`/`energy_scale`). See `normalizations_tech_report.md` for the numbers.
+4. **Models** — interchangeable nets mapping `(z, t) -> (G_hat, h_hat, Pi_hat)`: `SmoothPINN` (tanh MLP, default), `HybridPINN` (MLP + gated Fourier branch), `SirenPINN`. Inputs rescaled to `[-1, 1]`; output "hats" are multiplied by `Case` scales in `Physics.fields`.
+5. **`Physics`** — the residual engine. `residuals_raw` builds mass/momentum/energy residuals with `d(y, x)` (autograd) and chain-rule EOS derivatives (the spline is **not** autograd-differentiated — analytic partials are injected via the `value + slope*(x - x.detach())` trick). `residuals_scaled` divides by `Case` scales, with optional `relative_mom` normalization. The channel is split into three z-zones — `in`, `mid`, `out` — because the local pressure losses (Gaussian `delta_inlet`/`delta_outlet`) are near-singular at the ends.
+6. **`LossWeights` + `Trainer`** — weighted sum of zone PDE losses + IC + BC + keepers, Adam, grad-norm clipping.
+7. **Causal training** (cell 16 in `good_enough`) — Wang+2024 causal weighting: per-time-slice weights `w_i = exp(-ε Σ_{j<i} L_j)` with annealed ε, causalized keepers, IC anchored at `t=0`. This replaced the older stage-based `train_causal_curriculum`.
+8. **Diagnostics** — `validate` (PINN flow/NTPC vs. reference), `pressure_budget` (integral momentum balance), `pseudo_critical_indicator`, heatmaps, `summarize_early_late` (→ `summary_late.csv`), per-keeper diagnostic and keeper ablation, causal-front diagnostic.
+
+The FV solver (`pinn_v4_fv_solver.ipynb`) reuses steps 1–3 and 5 (`eos25`, `distributed_friction`, `NQ_prime`) with no neural net: semi-implicit upwind finite volumes, `ExtendedEOS25` smooth tail extension, N=600 / dt=0.05.
 
 ## Conventions and gotchas
 
-- **Starred = dimensionless.** A trailing `_star`/`*` or `_hat` denotes the network's working variables. Dimensional quantities use SI internally (Pa, J/kg, kg/m³), but the IAPWS97 library wants MPa and kJ/kg — note the `/1e6` and `/1e3` conversions whenever IAPWS97 is called.
-- **EOS derivatives are analytic, gradients are manual.** Never expect autograd to flow through `RectBivariateSpline` or `CubicSpline`. The `x - x.detach()` pattern is deliberate — preserve it when editing residuals.
-- **Three-zone sampling is structural**, not cosmetic. The inlet/outlet zones exist because the local pressure losses are near-singular there; the Gaussian `delta` half-widths are tied to `alpha` (default 0.02) and the sampler boundaries (`3*alpha`).
-- **The `Case` field list is append-only by intent.** Note duplicated fields (`roughness`, `friction_model`, etc. appear twice in the dataclass) and the comment "оставляем поле Lambda, чтобы старый код не ломался" — fields are kept around so older cells/notebooks don't break. Be cautious removing any.
-- **Iterate by copying a notebook to a new `pinn_v{N+1}_...ipynb`**, matching the established cell structure, rather than editing an old version in place — that is the project's versioning scheme.
-- Comments and print labels are partly in Russian; match the surrounding language when editing a cell.
+- **Starred = dimensionless.** `_star`/`*`/`_hat` are the network's working variables. Dimensional quantities are SI internally, but IAPWS97 wants MPa and kJ/kg — note the `/1e6`, `/1e3` conversions at every IAPWS97 call.
+- **EOS derivatives are analytic, gradients are manual.** Never expect autograd to flow through `RectBivariateSpline`/`CubicSpline`; preserve the `x - x.detach()` pattern when editing residuals.
+- **Three-zone sampling is structural**, not cosmetic. Gaussian `delta` half-widths are tied to `alpha` (default 0.02) and the sampler boundaries (`3*alpha`).
+- **The `Case` field list is append-only by intent** — duplicated fields and the "оставляем поле Lambda, чтобы старый код не ломался" comment are deliberate; be cautious removing anything.
+- **Iterate by copying a notebook to a new `pinn_v{N+1}_...ipynb`** matching the established cell structure, not by editing an old version in place.
+- Comments and print labels are partly in Russian; match the surrounding language when editing a cell. Communicate with the user in Russian.
